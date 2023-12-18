@@ -4,7 +4,6 @@ const multer = require('multer')
 const {v4: uuidv4} = require('uuid');
 require('dotenv').config()
 
-const app = express()
 const {DB_USER, DB_PASSWORD, DB_HOST, DB_NAME, DB_PORT} = process.env
 
 const config = {
@@ -14,18 +13,18 @@ const config = {
     database: DB_NAME,
     port: Number(DB_PORT)
 }
-
 const client = new Client(config);
 
+const app = express()
 app.use(express.json())
 
+// 파일을 디스크에 저장하지 않고 메모리에 임시저장
 const upload = multer({storage: multer.memoryStorage()})
 
 const rows = (result) => result.rows
 
 app.post('/uploads', upload.single('test'), async (req, res, next) => {
     try {
-
         const {originalname, buffer, size} = req.file;
         const fileId = uuidv4()
 
@@ -52,6 +51,7 @@ app.get('/downloads', async (req, res, next) => {
         }
         const result = await client.query(query)
 
+        // 찾으려는 데이터가 없으면 에러
         if (!result.rows.length) {
             throw new Error('empty data!')
         }
