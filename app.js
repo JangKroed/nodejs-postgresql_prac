@@ -70,93 +70,29 @@ app.get('/downloads', async (req, res, next) => {
 app.get('/refresh', async (req, res, next) => {
     try {
         const {table_schema} = req.query
-        const insertQuery = {
-            text: 'INSERT INTO column_sync (id, table_name, table_schema, column_name, data_type)\n' +
-                'SELECT \n' +
-                '  cur.table_schema || \'_\' || cur.column_name,\n' +
-                '  cur.table_name, \n' +
-                '  cur.table_schema, \n' +
-                '  cur.column_name, \n' +
-                '  cur.data_type\n' +
-                'FROM \n' +
-                '  information_schema.columns AS cur\n' +
-                'FULL JOIN \n' +
-                '  column_sync AS sync\n' +
-                'ON \n' +
-                '  cur.table_schema || \'_\' || cur.column_name = sync.id\n' +
-                'WHERE \n' +
-                '  cur.table_schema = $1\n' +
-                '  AND sync.id IS NULL',
+
+        const query = {
+            text: 'WITH merged_data AS (\n' +
+                '\tINSERT INTO column_sync (id, table_name, table_schema, column_name, data_type)\n' +
+                '\tSELECT \n' +
+                '\t\ttable_schema || \'_\' || column_name || \'_\' || ordinal_position,\n' +
+                '\t\ttable_name,\n' +
+                '\t\ttable_schema,\n' +
+                '\t\tcolumn_name,\n' +
+                '\t\tdata_type\n' +
+                '\tFROM information_schema.columns AS cur\n' +
+                '\tWHERE cur.table_schema = $1\n' +
+                '\tON CONFLICT (id)\n' +
+                '\tDO UPDATE SET data_type = EXCLUDED.data_type\n' +
+                '\tRETURNING id, table_name, table_schema, column_name, data_type\n' +
+                ')\n' +
+                'DELETE FROM column_sync AS sync\n' +
+                'WHERE sync.id not in (select id from merged_data)',
             values: [table_schema]
         }
-        const insertResult = await client.query(insertQuery)
-        console.log('insertResult: ', insertResult.rowCount)
+        const result = await client.query(query)
 
-        const updateQuery = {
-            text: 'UPDATE column_sync AS sync\n' +
-                'SET \n' +
-                '  id = cur.table_schema || \'_\' || cur.column_name,\n' +
-                '  data_type = cur.data_type\n' +
-                'FROM \n' +
-                '  information_schema.columns AS cur\n' +
-                'WHERE \n' +
-                '  cur.table_schema = $1\n' +
-                '  AND sync.id = cur.table_schema || \'_\' || cur.column_name\n' +
-                '  AND sync.data_type <> cur.data_type',
-            values: [table_schema]
-        }
-        const updateResult = await client.query(updateQuery)
-        console.log('updateResult: ', updateResult.rowCount)
-
-        const deleteQuery = {
-            text: 'DELETE FROM column_sync AS sync\n' +
-                'WHERE \n' +
-                '  sync.id IN (\n' +
-                '    SELECT cur.table_schema || \'_\' || cur.column_name\n' +
-                '    FROM information_schema.columns AS cur\n' +
-                '    WHERE cur.table_schema = $1\n' +
-                '  )\n' +
-                '  AND NOT EXISTS (\n' +
-                '    SELECT 1 \n' +
-                '    FROM information_schema.columns AS cur\n' +
-                '    WHERE sync.id = cur.table_schema || \'_\' || cur.column_name\n' +
-                '  )',
-            values: [table_schema]
-        }
-        const deleteResult = await client.query(deleteQuery)
-        console.log('deleteResult: ', deleteResult.rowCount)
-
-        // const result = await client.query('WITH merged_data AS (\n' +
-        //     '    SELECT \n' +
-        //     '        COALESCE(sync.id, cur.table_schema || \'_\' || cur.column_name) AS sync_id,\n' +
-        //     '        cur.table_name,\n' +
-        //     '        cur.table_schema,\n' +
-        //     '        cur.column_name,\n' +
-        //     '        cur.data_type AS new_data_type,\n' +
-        //     '        sync.data_type AS existing_data_type\n' +
-        //     '    FROM information_schema.columns AS cur\n' +
-        //     '    LEFT JOIN column_sync AS sync\n' +
-        //     '    ON sync.table_schema = cur.table_schema \n' +
-        //     '    AND sync.id = cur.table_schema || \'_\' || cur.column_name\n' +
-        //     ')\n' +
-        //     'INSERT INTO column_sync (id, table_name, table_schema, column_name, data_type)\n' +
-        //     'SELECT \n' +
-        //     '    sync_id,\n' +
-        //     '    table_name, \n' +
-        //     '    table_schema, \n' +
-        //     '    column_name, \n' +
-        //     '    new_data_type\n' +
-        //     'FROM merged_data\n' +
-        //     'WHERE sync_id IS NOT NULL\n' +
-        //     '\tON CONFLICT (id) DO UPDATE\n' +
-        //     '\tSET \n' +
-        //     '\t    id = EXCLUDED.id,\n' +
-        //     '\t    data_type = EXCLUDED.data_type\n' +
-        //     '\tWHERE column_sync.id = EXCLUDED.id\n' +
-        //     '\tAND column_sync.data_type <> EXCLUDED.data_type;')
-
-        console.log(result.rowCount)
-        res.status(200).end()
+        res.status(200).json({result})
     } catch (err) {
         console.error(err);
         res.status(400).json(err)
